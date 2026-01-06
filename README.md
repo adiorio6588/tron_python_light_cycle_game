@@ -1,4 +1,4 @@
-# tron_python_lights_cycle_game
+# tron_python_light_cycle_game
 python pygame game-development tron ai
 
 # 🟦 TRON: Light Cycles (Python / pygame)
