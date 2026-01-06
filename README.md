@@ -15,9 +15,7 @@ This project was built as a learning exercise in game logic, AI behavior, and re
 - ✅ Single Player vs AI
 - ✅ Two Player local mode
 - 🎯 Difficulty Selector (Easy / Normal / Hard)
-- 🌈 Neon glow trail visuals
 - 🧠 AI opponent with survival + aggression logic
-- 🏆 Best-of-5 round scoring system
 - ⌨️ Keyboard controls
 - 🐍 Python 3.12 compatible
 
