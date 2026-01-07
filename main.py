@@ -10,7 +10,6 @@ GRID_WIDTH = 40
 GRID_HEIGHT = 30
 WIDTH = GRID_WIDTH * CELL_SIZE
 HEIGHT = GRID_HEIGHT * CELL_SIZE
-FPS = 12
 
 BLACK = (0, 0, 0)
 BLUE = (0, 200, 255)
@@ -25,6 +24,18 @@ DOWN = (0, 1)
 LEFT = (-1, 0)
 RIGHT = (1, 0)
 DIRS = [UP, DOWN, LEFT, RIGHT]
+
+# Difficulty presets (you can tweak later)
+DIFFICULTY = {
+    "Easy":   {"fps": 8,  "aggression": 0.20},
+    "Normal": {"fps": 12, "aggression": 0.45},
+    "Hard":   {"fps": 16, "aggression": 0.70},
+}
+
+ROUNDS_TO_WIN = 3  # best of 5
+
+ASSET_TITLE = "assets/title_screen.png"
+MUSIC_PATH = "sound/background_music.wav"
 
 # -----------------------------
 # PLAYER CLASS
@@ -58,7 +69,6 @@ class LightCycle:
             rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
             pygame.draw.rect(surface, self.color, rect)
 
-
 # -----------------------------
 # HELPERS
 # -----------------------------
@@ -75,216 +85,246 @@ def in_bounds(pos):
 def build_occupied(players):
     occ = set()
     for p in players:
-        # include full trail
         occ.update(p.trail)
     return occ
-
-def will_collide(next_pos, occupied):
-    return (not in_bounds(next_pos)) or (next_pos in occupied)
 
 def next_pos_from(head, direction):
     x, y = head
     dx, dy = direction
     return (x + dx, y + dy)
 
-def manhattan(a, b):
-    return abs(a[0] - b[0]) + abs(a[1] - b[1])
-
 def safe_directions(head, current_dir, occupied):
-    # Try forward/left/right first feel, but we will score anyway.
     candidates = []
     for d in DIRS:
-        # don’t allow reverse
         if (-d[0], -d[1]) == current_dir:
             continue
         np = next_pos_from(head, d)
-        if not will_collide(np, occupied):
+        if in_bounds(np) and np not in occupied:
             candidates.append(d)
     return candidates
 
-def choose_ai_direction(ai, human, occupied, aggression=0.35):
-    """
-    Simple AI:
-    1) Only choose moves that are safe (no immediate collision).
-    2) Score each safe move by:
-       - how much free space it gives (basic lookahead)
-       - (sometimes) how much it reduces distance to the human
-    """
+def manhattan(a, b):
+    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+def choose_ai_direction(ai, human, occupied, aggression=0.45):
     candidates = safe_directions(ai.head, ai.direction, occupied)
     if not candidates:
-        return ai.direction  # doomed, keep moving
+        return ai.direction
 
     hunt = random.random() < aggression
-
-    best = None
+    best = ai.direction
     best_score = -10**9
 
     for d in candidates:
         np = next_pos_from(ai.head, d)
 
-        # --- tiny lookahead: count how many safe options we'd have next turn
-        # (crude "space" metric)
-        # Temporarily mark next position as occupied (since AI leaves trail)
         occ2 = set(occupied)
         occ2.add(np)
-        future_moves = safe_directions(np, d, occ2)
-        space_score = len(future_moves) * 10
+        space_score = len(safe_directions(np, d, occ2)) * 10
 
-        # --- distance score (lower is better) if hunting
         dist_score = 0
         if hunt:
-            dist_score = (50 - manhattan(np, human.head))  # higher is better
+            dist_score = (50 - manhattan(np, human.head))
 
-        # --- keep moving straight preference (smoothness)
         straight_bonus = 2 if d == ai.direction else 0
-
-        score = space_score + dist_score + straight_bonus
-
-        # add a small random jitter so AI isn't too predictable
-        score += random.randint(-1, 1)
+        score = space_score + dist_score + straight_bonus + random.randint(-2, 2)
 
         if score > best_score:
             best_score = score
             best = d
 
-    return best if best is not None else ai.direction
+    return best
 
-
-def reset_game(mode):
-    # mode: "1P" or "2P"
+def reset_round(vs_ai: bool):
     p1 = LightCycle(BLUE, (10, GRID_HEIGHT // 2), RIGHT, name="Player 1")
-    if mode == "2P":
-        p2 = LightCycle(RED, (GRID_WIDTH - 10, GRID_HEIGHT // 2), LEFT, name="Player 2")
-    else:
+    if vs_ai:
         p2 = LightCycle(RED, (GRID_WIDTH - 10, GRID_HEIGHT // 2), LEFT, name="AI")
+    else:
+        p2 = LightCycle(RED, (GRID_WIDTH - 10, GRID_HEIGHT // 2), LEFT, name="Player 2")
     return p1, p2
 
 # -----------------------------
-# UI
+# UI SCREENS
 # -----------------------------
 def draw_center_text(screen, font, text, y, color=WHITE):
     surf = font.render(text, True, color)
     rect = surf.get_rect(center=(WIDTH // 2, y))
     screen.blit(surf, rect)
 
-def menu_loop(screen, clock):
-    title_font = pygame.font.SysFont(None, 72)
-    font = pygame.font.SysFont(None, 36)
+def title_screen(screen, clock, title_image):
+    font = pygame.font.SysFont(None, 30)
+    blink_timer = 0
+    show = True
+
+    while True:
+        clock.tick(30)
+        blink_timer += 1
+        if blink_timer % 20 == 0:
+            show = not show
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit(); sys.exit()
+            if event.type == pygame.KEYDOWN:
+                return
+
+        screen.blit(title_image, (0, 0))
+        if show:
+            txt = font.render("PRESS ANY KEY", True, WHITE)
+            rect = txt.get_rect(center=(WIDTH // 2, HEIGHT - 11))
+            screen.blit(txt, rect)
+
+        pygame.display.flip()
+
+def mode_select_screen(screen, clock):
+    title_font = pygame.font.SysFont(None, 54)
+    font = pygame.font.SysFont(None, 30)
+    small = pygame.font.SysFont(None, 24)
 
     while True:
         clock.tick(30)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
+                pygame.quit(); sys.exit()
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_1:
-                    return "1P"
+                    return {"vs_ai": True, "best_of": 1}
                 if event.key == pygame.K_2:
-                    return "2P"
+                    return {"vs_ai": True, "best_of": 5}
+                if event.key == pygame.K_3:
+                    return {"vs_ai": False, "best_of": 1}
+                if event.key == pygame.K_4:
+                    return {"vs_ai": False, "best_of": 5}
 
         screen.fill(BLACK)
         draw_grid(screen)
 
-        draw_center_text(screen, title_font, "TRON", HEIGHT // 2 - 120, YELLOW)
-        draw_center_text(screen, font, "Press 1: Single Player vs AI", HEIGHT // 2 - 20)
-        draw_center_text(screen, font, "Press 2: Two Player", HEIGHT // 2 + 20)
-        draw_center_text(screen, font, "WASD = P1   Arrows = P2", HEIGHT // 2 + 70, GRAY)
+        draw_center_text(screen, title_font, "SELECT MODE", 90, YELLOW)
+        draw_center_text(screen, font, "1) 1-time play vs AI", 170, WHITE)
+        draw_center_text(screen, font, "2) Best of 5 vs AI", 210, WHITE)
+        draw_center_text(screen, font, "3) 1-time play (2 Player)", 260, WHITE)
+        draw_center_text(screen, font, "4) Best of 5 (2 Player)", 300, WHITE)
+        draw_center_text(screen, small, "P1 = Arrow Keys | P2 = WASD (2P only)", 360, GRAY)
+        draw_center_text(screen, small, "ESC to quit", 390, GRAY)
 
         pygame.display.flip()
 
-def game_over_overlay(screen, font, winner_text):
-    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-    overlay.fill((0, 0, 0, 170))
-    screen.blit(overlay, (0, 0))
-    draw_center_text(screen, font, "GAME OVER", HEIGHT // 2 - 40, WHITE)
-    draw_center_text(screen, font, winner_text, HEIGHT // 2, YELLOW)
-    draw_center_text(screen, font, "Press R to Restart | ESC for Menu", HEIGHT // 2 + 50, WHITE)
-
 # -----------------------------
-# MAIN GAME
+# MAIN
 # -----------------------------
 def main():
     pygame.init()
+
+    # Init audio + play background music (loop)
+    try:
+        pygame.mixer.init()
+        pygame.mixer.music.load(MUSIC_PATH)
+        pygame.mixer.music.set_volume(0.4)
+        pygame.mixer.music.play(-1, fade_ms=1500)
+    except Exception as e:
+        print(f"[WARN] Music not playing: {MUSIC_PATH}\n{e}")
+
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("TRON Light Cycles")
     clock = pygame.time.Clock()
 
+    # Load title image from assets/
+    try:
+        title_img = pygame.image.load(ASSET_TITLE).convert()
+        title_img = pygame.transform.scale(title_img, (WIDTH, HEIGHT))
+    except Exception as e:
+        print(f"[WARN] Could not load title screen image: {ASSET_TITLE}\n{e}")
+        title_img = None
+
+    if title_img:
+        title_screen(screen, clock, title_img)
+
+    # Pick mode after title screen
+    settings = mode_select_screen(screen, clock)
+    vs_ai = settings["vs_ai"]
+    best_of = settings["best_of"]
+
+    # Difficulty (kept simple: Normal defaults)
+    difficulty = "Normal"
+    fps = DIFFICULTY[difficulty]["fps"]
+    aggression = DIFFICULTY[difficulty]["aggression"]
+
+    # Scores only used in best-of-5
+    scores = {"P1": 0, "P2": 0}
+    rounds_to_win = 1 if best_of == 1 else ROUNDS_TO_WIN
+
+    # Start first round
+    player1, player2 = reset_round(vs_ai)
+    round_over = False
+    winner_text = ""
+
     hud_font = pygame.font.SysFont(None, 28)
     big_font = pygame.font.SysFont(None, 44)
 
-    mode = menu_loop(screen, clock)
-    player1, player2 = reset_game(mode)
-    game_over = False
-    winner_text = ""
-
     while True:
-        clock.tick(FPS)
+        clock.tick(fps)
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                pygame.mixer.music.stop()
                 pygame.quit()
                 sys.exit()
 
             if event.type == pygame.KEYDOWN:
-                # Global
                 if event.key == pygame.K_ESCAPE:
-                    mode = menu_loop(screen, clock)
-                    player1, player2 = reset_game(mode)
-                    game_over = False
-                    winner_text = ""
-                    continue
+                    pygame.mixer.music.stop()
+                    pygame.quit()
+                    sys.exit()
 
-                if game_over:
+                if round_over:
                     if event.key == pygame.K_r:
-                        player1, player2 = reset_game(mode)
-                        game_over = False
+                        # If match already ended, reset match scores
+                        if best_of == 5 and (scores["P1"] >= rounds_to_win or scores["P2"] >= rounds_to_win):
+                            scores = {"P1": 0, "P2": 0}
+                        player1, player2 = reset_round(vs_ai)
+                        round_over = False
                         winner_text = ""
                     continue
 
-                # Player 1 controls (always human)
-                if event.key == pygame.K_w:
+                # Player 1 = ARROW KEYS
+                if event.key == pygame.K_UP:
                     player1.change_direction(UP)
-                elif event.key == pygame.K_s:
+                elif event.key == pygame.K_DOWN:
                     player1.change_direction(DOWN)
-                elif event.key == pygame.K_a:
+                elif event.key == pygame.K_LEFT:
                     player1.change_direction(LEFT)
-                elif event.key == pygame.K_d:
+                elif event.key == pygame.K_RIGHT:
                     player1.change_direction(RIGHT)
 
-                # Player 2 controls only in 2P mode
-                if mode == "2P":
-                    if event.key == pygame.K_UP:
+                # Player 2 = WASD (only in 2P)
+                if not vs_ai:
+                    if event.key == pygame.K_w:
                         player2.change_direction(UP)
-                    elif event.key == pygame.K_DOWN:
+                    elif event.key == pygame.K_s:
                         player2.change_direction(DOWN)
-                    elif event.key == pygame.K_LEFT:
+                    elif event.key == pygame.K_a:
                         player2.change_direction(LEFT)
-                    elif event.key == pygame.K_RIGHT:
+                    elif event.key == pygame.K_d:
                         player2.change_direction(RIGHT)
 
-        if not game_over:
-            # AI picks direction (only in 1P mode)
-            if mode == "1P":
-                occupied_now = build_occupied([player1, player2])
-                # IMPORTANT: allow AI's current head because it will move off it
-                # (occupied set includes head, which is fine because next_pos differs)
-                player2.change_direction(choose_ai_direction(player2, player1, occupied_now, aggression=0.40))
+        if not round_over:
+            # AI move
+            if vs_ai:
+                occ_now = build_occupied([player1, player2])
+                player2.change_direction(
+                    choose_ai_direction(player2, player1, occ_now, aggression=aggression)
+                )
 
-            # Move both
+            # Move
             player1.move()
             player2.move()
 
-            # Collision check with trails + walls:
             players = [player1, player2]
-            occupied_after = build_occupied(players)
 
-            # Each player collides if their head is out of bounds or hits any trail (including opponent)
             def player_dead(p):
                 h = p.head
                 if not in_bounds(h):
                     return True
-                # if head appears earlier in ANY trail => collision
                 for other in players:
                     if h in other.trail[:-1]:
                         return True
@@ -294,16 +334,18 @@ def main():
             p2_dead = player_dead(player2)
 
             if p1_dead or p2_dead:
-                game_over = True
-                player1.alive = not p1_dead
-                player2.alive = not p2_dead
+                round_over = True
 
                 if p1_dead and p2_dead:
                     winner_text = "Draw!"
                 elif p2_dead:
                     winner_text = "Player 1 Wins!"
+                    if best_of == 5:
+                        scores["P1"] += 1
                 else:
-                    winner_text = ("AI Wins!" if mode == "1P" else "Player 2 Wins!")
+                    winner_text = "AI Wins!" if vs_ai else "Player 2 Wins!"
+                    if best_of == 5:
+                        scores["P2"] += 1
 
         # Draw
         screen.fill(BLACK)
@@ -311,16 +353,44 @@ def main():
         player1.draw(screen)
         player2.draw(screen)
 
-        # HUD
-        mode_text = "1P vs AI" if mode == "1P" else "2P"
-        hud = hud_font.render(f"Mode: {mode_text}   (ESC = Menu)", True, GRAY)
-        screen.blit(hud, (10, 10))
+        # Score (ONLY for best-of-5)
+        if best_of == 5:
+            right_name = "AI" if vs_ai else "P2"
+            hud = hud_font.render(
+                f"BEST OF 5  |  P1 {scores['P1']} - {scores['P2']} {right_name}",
+                True,
+                GRAY
+            )
+            screen.blit(hud, (10, 10))
 
-        if game_over:
-            game_over_overlay(screen, big_font, winner_text)
+        # Round/match overlay
+        if round_over:
+            overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 170))
+            screen.blit(overlay, (0, 0))
+
+            match_over = (best_of == 5) and (scores["P1"] >= rounds_to_win or scores["P2"] >= rounds_to_win)
+            if match_over:
+                if scores["P1"] > scores["P2"]:
+                    final = "PLAYER 1 WINS THE MATCH!"
+                else:
+                    final = "AI WINS THE MATCH!" if vs_ai else "PLAYER 2 WINS THE MATCH!"
+
+                txt1 = big_font.render("MATCH OVER", True, WHITE)
+                txt2 = big_font.render(final, True, YELLOW)
+                screen.blit(txt1, txt1.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 40)))
+                screen.blit(txt2, txt2.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 10)))
+                txt3 = hud_font.render("Press R to play again | ESC to quit", True, WHITE)
+                screen.blit(txt3, txt3.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 70)))
+            else:
+                txt1 = big_font.render("ROUND OVER", True, WHITE)
+                txt2 = big_font.render(winner_text, True, YELLOW)
+                screen.blit(txt1, txt1.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 40)))
+                screen.blit(txt2, txt2.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 10)))
+                txt3 = hud_font.render("Press R for next round | ESC to quit", True, WHITE)
+                screen.blit(txt3, txt3.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 70)))
 
         pygame.display.flip()
-
 
 if __name__ == "__main__":
     main()
