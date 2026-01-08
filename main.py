@@ -37,16 +37,21 @@ ROUNDS_TO_WIN = 3  # best of 5
 ASSET_TITLE = "assets/title_screen.png"
 MUSIC_PATH = "sound/background_music.wav"
 
+# NEW: sprite paths
+BLUE_SPRITE_PATH = "assets/blue_cycle.png"
+RED_SPRITE_PATH  = "assets/red_cycle.png"
+
 # -----------------------------
 # PLAYER CLASS
 # -----------------------------
 class LightCycle:
-    def __init__(self, color, start_pos, direction, name="Player"):
+    def __init__(self, color, start_pos, direction, name="Player", sprite=None):
         self.color = color
         self.direction = direction
         self.trail = [start_pos]
         self.alive = True
         self.name = name
+        self.sprite = sprite  # pygame.Surface or None
 
     @property
     def head(self):
@@ -64,10 +69,41 @@ class LightCycle:
         if (-new_dir[0], -new_dir[1]) != self.direction:
             self.direction = new_dir
 
+    def _rotated_sprite(self):
+        """Rotate sprite so it faces current direction.
+        Assumes the base sprite faces RIGHT by default.
+        """
+        if self.sprite is None:
+            return None
+
+        if self.direction == RIGHT:
+            angle = 0
+        elif self.direction == DOWN:
+            angle = -90
+        elif self.direction == LEFT:
+            angle = 180
+        else:  # UP
+            angle = 90
+
+        return pygame.transform.rotate(self.sprite, angle)
+
     def draw(self, surface):
-        for x, y in self.trail:
+        # draw trail as colored blocks (excluding head)
+        for x, y in self.trail[:-1]:
             rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
             pygame.draw.rect(surface, self.color, rect)
+
+        # draw head as sprite (fallback to block if missing)
+        hx, hy = self.head
+        head_rect = pygame.Rect(hx * CELL_SIZE, hy * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+
+        spr = self._rotated_sprite()
+        if spr:
+            # center sprite on the cell
+            r = spr.get_rect(center=head_rect.center)
+            surface.blit(spr, r)
+        else:
+            pygame.draw.rect(surface, self.color, head_rect)
 
 # -----------------------------
 # HELPERS
@@ -135,12 +171,13 @@ def choose_ai_direction(ai, human, occupied, aggression=0.45):
 
     return best
 
-def reset_round(vs_ai: bool):
-    p1 = LightCycle(BLUE, (10, GRID_HEIGHT // 2), RIGHT, name="Player 1")
+# UPDATED: pass sprites into reset_round
+def reset_round(vs_ai: bool, blue_sprite=None, red_sprite=None):
+    p1 = LightCycle(BLUE, (10, GRID_HEIGHT // 2), RIGHT, name="Player 1", sprite=blue_sprite)
     if vs_ai:
-        p2 = LightCycle(RED, (GRID_WIDTH - 10, GRID_HEIGHT // 2), LEFT, name="AI")
+        p2 = LightCycle(RED, (GRID_WIDTH - 10, GRID_HEIGHT // 2), LEFT, name="AI", sprite=red_sprite)
     else:
-        p2 = LightCycle(RED, (GRID_WIDTH - 10, GRID_HEIGHT // 2), LEFT, name="Player 2")
+        p2 = LightCycle(RED, (GRID_WIDTH - 10, GRID_HEIGHT // 2), LEFT, name="Player 2", sprite=red_sprite)
     return p1, p2
 
 # -----------------------------
@@ -204,8 +241,8 @@ def mode_select_screen(screen, clock):
         draw_center_text(screen, font, "2) Best of 5 vs AI", 210, WHITE)
         draw_center_text(screen, font, "3) 1-time play (2 Player)", 260, WHITE)
         draw_center_text(screen, font, "4) Best of 5 (2 Player)", 300, WHITE)
-        draw_center_text(screen, small, "P1 = Arrow Keys | P2 = WASD (2P only)", 360, GRAY)
-        draw_center_text(screen, small, "ESC to quit", 390, GRAY)
+        draw_center_text(screen, small, "P1 = Arrow Keys | P2 = WASD (2P only)", 360, YELLOW)
+        draw_center_text(screen, small, "ESC to quit", 390, YELLOW)
 
         pygame.display.flip()
 
@@ -249,12 +286,25 @@ def main():
     fps = DIFFICULTY[difficulty]["fps"]
     aggression = DIFFICULTY[difficulty]["aggression"]
 
+    # NEW: load cycle sprites and scale to cell size
+    def load_cycle_sprite(path):
+        try:
+            img = pygame.image.load(path).convert_alpha()
+            img = pygame.transform.smoothscale(img, (CELL_SIZE, CELL_SIZE))
+            return img
+        except Exception as e:
+            print(f"[WARN] Could not load sprite: {path}\n{e}")
+            return None
+
+    blue_sprite = load_cycle_sprite(BLUE_SPRITE_PATH)
+    red_sprite = load_cycle_sprite(RED_SPRITE_PATH)
+
     # Scores only used in best-of-5
     scores = {"P1": 0, "P2": 0}
     rounds_to_win = 1 if best_of == 1 else ROUNDS_TO_WIN
 
-    # Start first round
-    player1, player2 = reset_round(vs_ai)
+    # Start first round (UPDATED)
+    player1, player2 = reset_round(vs_ai, blue_sprite=blue_sprite, red_sprite=red_sprite)
     round_over = False
     winner_text = ""
 
@@ -281,7 +331,8 @@ def main():
                         # If match already ended, reset match scores
                         if best_of == 5 and (scores["P1"] >= rounds_to_win or scores["P2"] >= rounds_to_win):
                             scores = {"P1": 0, "P2": 0}
-                        player1, player2 = reset_round(vs_ai)
+                        # UPDATED
+                        player1, player2 = reset_round(vs_ai, blue_sprite=blue_sprite, red_sprite=red_sprite)
                         round_over = False
                         winner_text = ""
                     continue
@@ -357,9 +408,9 @@ def main():
         if best_of == 5:
             right_name = "AI" if vs_ai else "P2"
             hud = hud_font.render(
-                f"BEST OF 5  |  P1 {scores['P1']} - {scores['P2']} {right_name}",
+                f"BEST OF 5  |  {scores['P1']} - {scores['P2']} {right_name}",
                 True,
-                GRAY
+                WHITE
             )
             screen.blit(hud, (10, 10))
 
